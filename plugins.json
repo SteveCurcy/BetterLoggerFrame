@@ -1,0 +1,14 @@
+[
+  {
+    "src": "hello.c",
+    "methods": [
+      {
+        "name": "hello",
+        "target": "clone",
+        "type": "kprobe"
+      }
+    ],
+    "perf_event": "events",
+    "struct": "data_t"
+  }
+]
