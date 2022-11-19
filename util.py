@@ -48,4 +48,4 @@ def safeWrite(path: str, values: str) -> bool:
         return True
     except:
         printError("\"{}\" opened failed.".format(path))
-        return False
+        return None

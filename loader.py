@@ -1,9 +1,16 @@
 #!/usr/bin/python
 #
+# loader.py
+# Author: Xu.Cao (steve curcy)
+# Created at 2022-11-18 09:17
+# Version: v0.1.1.221119_build_b1_Xu.C
+# License under GPLv2.0 ("License")
+#
 import re
 import os
 import json
 import util
+import verify
 
 perfEventTemplate = """
 def print_{}(cpu, data, size):
@@ -12,52 +19,98 @@ def print_{}(cpu, data, size):
 """
 
 
-def getStructure(src: str, structName: str) -> list:
+#
+# @brief - To return a handler in the ctl file, replace the method name if invalid.
+# @param ctlPath - the "ctl" file's path
+# @param event - "perf_event"'s name
+# @return str - the handler in `str`
+#
+def getHandlerByCtl(ctlPath: str, event: str) -> str:
+    ctl = util.safeRead(ctlPath)
+    if not ctl:
+        return None
+    if len(re.findall(r"def [a-zA-Z_ ,]+\(", ctl)) != 1:
+        util.printError("Only one perf_event handler is supported.")
+        return None
+    ctl = re.sub(r"def [a-zA-Z_ ,]+\(", "def print_{}(".format(event), ctl)
+    return ctl
+
+
+#
+# @brief - To return a handler based on the specified struct
+# @param src - src file's content
+# @param structName - the name of specified struct in plugins.json
+# @param event - "perf_event"'s name
+# @return str - the handler in `str`
+#
+def getHandlerByStruct(src: str, structName: str, event: str) -> str:
     structRegion = re.search(r"struct\s+%s\s*{\s*([a-z0-9A-Z_ \[\]]+;\s+)+};" % structName, src, re.DOTALL)
     if structRegion is None:
         util.printError("struct {} is not found.".format(structName))
         return None
     var = re.findall(r"[ \t\n]+([a-zA-Z0-9_]+\s+[a-zA-Z0-9_]+)[a-zA-Z0-9_\[\]]*;", structRegion.group(), re.DOTALL)
-    if var is None or not len(var):
+    if not var or not len(var):
         return None
     ret = list()
     for item in var:
         ret.append(item.split())
-    return ret
+    fmt, val, l = "", "", len(ret)
+    for i in range(l):
+        if ret[i][0] == "char":
+            fmt += "[{}: %s]{}".format(ret[i][1], "" if i == l - 1 else ", ")
+        else:
+            fmt += "[{}: %d]{}".format(ret[i][1], "" if i == l - 1 else ", ")
+        val += "event.{}{}".format(ret[i][1], "" if i == l - 1 else ", ")
+    return perfEventTemplate.format(event, event, fmt, val)
 
 
+#
+# @brief to get the info of this plugin
+# @param plugin - the plugin to load
+# @return dict - infoes of this plugin
+#
 def loadPlugin(plugin: dict) -> dict:
     if plugin is None:
         return None
-    ret = {"headers": "", "prog": None, "attach": "", "handler": None, "buffer": None}
+    util.printTip("Trying to load module {}.".format(plugin["name"] if "name" in plugin else plugin["src"]))
+
+    ret = {"headers": None, "prog": None, "attach": "", "handler": None, "buffer": None}
     src = util.safeRead("src/" + plugin["src"])
+    if not src:
+        util.printError("Cannot get the content of {}, loaded failed.".format(plugin["src"]))
+        return None
     headers = re.search(r"(#include[</.a-z \n]+>\s+)+", src, re.DOTALL)
     if headers:
         src = src[:headers.span()[0]] + src[headers.span()[1]:]
         headers = headers.group()
-    struct = getStructure(src, plugin["struct"])
-    fmt, val, l = "", "", len(struct)
-    for i in range(l):
-        if struct[i][0] == "char":
-            fmt += "[{}: %s]{}".format(struct[i][1], "" if i == l - 1 else ", ")
-        else:
-            fmt += "[{}: %d]{}".format(struct[i][1], "" if i == l - 1 else ", ")
-        val += "event.{}{}".format(struct[i][1], "" if i == l - 1 else ", ")
+    else:
+        headers = ""
     ret["headers"] = headers
     ret["prog"] = src
     for m in plugin["methods"]:
         ret["attach"] += "b.attach_{}(event=b.get_syscall_fnname(\"{}\"), fn_name=\"{}\")\n".format(m["type"],
                                                                                                     m["target"],
                                                                                                     m["name"])
-        util.printOk("Attach to function {} to kernel function sys_{}.".format(m["name"], m["target"]))
-    ret["handler"] = perfEventTemplate.format(plugin["perf_event"], plugin["perf_event"], fmt, val)
+        util.printOk("Attach to function \"{}\" to kernel function \"sys_{}\".".format(m["name"], m["target"]))
+    if ret["attach"] == "":
+        util.printWarn("No method of this module was attached, do you mean it?")
+    if "ctl" in plugin:
+        ret["handler"] = getHandlerByCtl("ctl/" + plugin["ctl"], plugin["perf_event"])
+    else:
+        ret["handler"] = getHandlerByStruct(src, plugin["struct"], plugin["perf_event"])
+    if not ret["handler"]:
+        util.printError("No perf_event handler was loaded!")
+        return None
     ret["buffer"] = "b[\"{}\"].open_perf_buffer(print_{})".format(plugin["perf_event"], plugin["perf_event"])
 
-    util.printOk("{} loaded successfully.".format(plugin["name"] if "name" in plugin else plugin["src"]))
+    util.printOk("\"{}\" loaded successfully.".format(plugin["name"] if "name" in plugin else plugin["src"]))
     return ret
 
 
-if __name__ == "__main__":
+#
+# @brief generate the synthetic ebpf file and give it executive power.
+#
+def gen():
     print("-------- generating eBPF python program --------")
     prog = """#!/usr/bin/python
 from bcc import BPF
@@ -80,20 +133,38 @@ while True:
     except KeyboardInterrupt:
         exit(0)
     """
+
     headers, progs, attaches, handlers, buffers = "", "", "", "", ""
     plugins = util.getJson("plugins.json")
-    if plugins is None:
+    if not plugins:
+        util.printError("\"plugins.json\" loaded failed.")
         exit(-1)
+    if not verify.verifyPlugins(plugins):
+        util.printError("Validation failed: Invalid syntax checked in plugins.json.")
+        exit(-1)
+
     for p in plugins:
         plugin = loadPlugin(p)
+        if not plugin:
+            continue
         headers += plugin["headers"]
-        progs += plugin["prog"] + "\n\n"
+        progs += plugin["prog"] + "\n"
         attaches += plugin["attach"]
         handlers += plugin["handler"]
         buffers += plugin["buffer"]
-    # print(prog.format(prog=headers + progs, attach=attaches, handler=handlers, buffer=buffers))
+    
+    if progs == "" or handlers == "":
+        util.printError("No module was loaded.")
+    if attaches == "":
+        util.printWarn("No method attach to kernel functions, do you mean it?")
+
     if util.safeWrite("ebpf.py", prog.format(prog=headers + progs, attach=attaches, handler=handlers, buffer=buffers)):
         os.system("chmod u+x ebpf.py")
         util.printOk("ebpf.py has been generated.")
     else:
         util.printError("ebpf.py generated failed.")
+
+
+
+if __name__ == "__main__":
+    gen()

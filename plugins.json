@@ -1,6 +1,8 @@
 [
   {
+    "name": "hello",
     "src": "hello.c",
+    "ctl": "hello.py",
     "methods": [
       {
         "name": "hello",
