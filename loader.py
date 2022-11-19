@@ -16,6 +16,7 @@ perfEventTemplate = """
 def print_{}(cpu, data, size):
     event = b["{}"].event(data)
     print("[cpu: %d], {}" % (cpu, {}))
+
 """
 
 
@@ -33,7 +34,7 @@ def getHandlerByCtl(ctlPath: str, event: str) -> str:
         util.printError("Only one perf_event handler is supported.")
         return None
     ctl = re.sub(r"def [a-zA-Z_ ,]+\(", "def print_{}(".format(event), ctl)
-    return ctl
+    return ctl + "\n"
 
 
 #
@@ -76,7 +77,7 @@ def loadPlugin(plugin: dict) -> dict:
 
     ret = {"headers": None, "prog": None, "attach": "", "handler": None, "buffer": None}
     src = util.safeRead("src/" + plugin["src"])
-    if not src:
+    if not src or not len(src):
         util.printError("Cannot get the content of {}, loaded failed.".format(plugin["src"]))
         return None
     headers = re.search(r"(#include[</.a-z \n]+>\s+)+", src, re.DOTALL)
@@ -142,6 +143,7 @@ while True:
     if not verify.verifyPlugins(plugins):
         util.printError("Validation failed: Invalid syntax checked in plugins.json.")
         exit(-1)
+    util.printOk("Validation passed.")
 
     for p in plugins:
         plugin = loadPlugin(p)

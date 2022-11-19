@@ -4,7 +4,7 @@
 system : Ubuntu 22.04 LTS  
 kernel : 5.15.0-53-generic  
 tool : BCC  
-Version: v0.1.1.221117_build_b1_XuC  
+Version: v0.1.1.221117_build_b2_Xu.C  
   
 ## Note
 This project ask for conditions as follows:  
@@ -12,12 +12,7 @@ This project ask for conditions as follows:
 - Modules Thought: You can see ".c" as a module, and you plug that in the whole program by modify the "plugin.json". 
 You can modify it referring the example "plugin.json".  
   
-## 2022-11-17 What's new
-Now, you can use "loader.py" to generate an "ebpf.py" which will attach your plugin modules in C language. The target 
-file name is fixed now, and I may optimize it in the future. Besides, This project is very simple now, and can only 
-handle the situations in "plugins.json" and can customize a little. I will update it later.  
-  
-You need to know that only kprobe is supported now.  
+you can use it by running `./loader.py` and then `sudo ./ebpf.py`.
   
 ## Original thought
 This project is mainly to make a logger frame which will provide high-quality logs. I want this frame to have these
