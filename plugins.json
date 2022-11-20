@@ -12,5 +12,17 @@
     ],
     "perf_event": "events",
     "struct": "data_t"
+  }, {
+    "name": "shell",
+    "src": "shell.c",
+    "methods": [
+      {
+        "name": "shell_execve",
+        "target": "execve",
+        "type": "uprobe"
+      }
+    ],
+    "perf_event": "commands",
+    "struct": "command_t"
   }
 ]

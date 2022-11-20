@@ -1,10 +1,5 @@
 #!/usr/bin/python
-#
-# loader.py
-# Author: Xu.Cao (steve curcy)
-# Created at 2022-11-18 09:17
-# Version: v0.1.1.221119_build_b1_Xu.C
-# License under GPLv2.0 ("License")
+# -*- coding: utf-8 -*-
 #
 import re
 import os
@@ -45,7 +40,7 @@ def getHandlerByCtl(ctlPath: str, event: str) -> str:
 # @return str - the handler in `str`
 #
 def getHandlerByStruct(src: str, structName: str, event: str) -> str:
-    structRegion = re.search(r"struct\s+%s\s*{\s*([a-z0-9A-Z_ \[\]]+;\s+)+};" % structName, src, re.DOTALL)
+    structRegion = re.search(r"struct\s+%s\s*{\s*([a-z0-9A-Z_ \[\]]+;\s*[/a-zA-Z _0-9]*\s+)+};" % structName, src, re.DOTALL)
     if structRegion is None:
         util.printError("struct {} is not found.".format(structName))
         return None
@@ -86,13 +81,19 @@ def loadPlugin(plugin: dict) -> dict:
         headers = headers.group()
     else:
         headers = ""
+    src = re.sub(r"\\", "\\\\\\\\", src)
     ret["headers"] = headers
     ret["prog"] = src
     for m in plugin["methods"]:
-        ret["attach"] += "b.attach_{}(event=b.get_syscall_fnname(\"{}\"), fn_name=\"{}\")\n".format(m["type"],
+        if m["type"] == "kprobe":
+            ret["attach"] += "b.attach_{}(event=b.get_syscall_fnname(\"{}\"), fn_name=\"{}\")\n".format(m["type"],
                                                                                                     m["target"],
                                                                                                     m["name"])
-        util.printOk("Attach to function \"{}\" to kernel function \"sys_{}\".".format(m["name"], m["target"]))
+        else:
+            ret["attach"] += "b.attach_{}(name=\"c\", sym=\"{}\", fn_name=\"{}\")\n".format(m["type"],
+                                                                                            m["target"],
+                                                                                            m["name"])
+        util.printOk("Attach the function \"{}\" to function \"{}\".".format(m["name"], m["target"]))
     if ret["attach"] == "":
         util.printWarn("No method of this module was attached, do you mean it?")
     if "ctl" in plugin:
@@ -102,9 +103,9 @@ def loadPlugin(plugin: dict) -> dict:
     if not ret["handler"]:
         util.printError("No perf_event handler was loaded!")
         return None
-    ret["buffer"] = "b[\"{}\"].open_perf_buffer(print_{})".format(plugin["perf_event"], plugin["perf_event"])
+    ret["buffer"] = "b[\"{}\"].open_perf_buffer(print_{})\n".format(plugin["perf_event"], plugin["perf_event"])
 
-    util.printOk("\"{}\" loaded successfully.".format(plugin["name"] if "name" in plugin else plugin["src"]))
+    util.printOk("module \"{}\" loaded successfully.".format(plugin["name"] if "name" in plugin else plugin["src"]))
     return ret
 
 
