@@ -24,5 +24,24 @@
     ],
     "perf_event": "commands",
     "struct": "command_t"
+  }, {
+    "name": "files",
+    "src": "files.c",
+    "methods": [
+      {
+        "name": "trace_file_open",
+        "target": "ext4_file_open",
+        "type": "kprobe",
+        "kprobe": "raw"
+      }
+    ],
+    "init_data": [
+      {
+        "name": "file_info",
+        "key": [[792713]]
+      }
+    ],
+    "perf_event": "files",
+    "struct": "file_t"
   }
 ]

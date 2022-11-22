@@ -3,12 +3,22 @@
 import os
 import util
 
-def verifyPlugins(plugins: dict) -> bool:
+
+#
+# @brief check plugins' validity.
+# @param plugins - plugins in json
+# @return bool - if the plugins are valid
+#
+def verifyPlugins(plugins: list) -> bool:
     # record if there are duplicated module names or source files.
     allPlugNames = set()
     allSrcNames = set()
     allTarNames = set()
     for plugin in plugins:
+        if plugin is not dict:
+            util.printError("A plugin must be in `dict`")
+            return False
+
         # check module names
         if "name" in plugin:
             if plugin["name"] in allPlugNames:
@@ -39,7 +49,13 @@ def verifyPlugins(plugins: dict) -> bool:
         if "methods" not in plugin:
             util.printError("Essential methods mappings are lost.")
             return False
+        if plugin["methods"] is not list:
+            util.printError("\"methods\" item must be a list.")
+            return False
         for m in plugin["methods"]:
+            if m is not dict:
+                util.printError("Every method in \"methods\" must be a `dict`")
+                return False
             if "type" not in m or "name" not in m or "target" not in m:
                 util.printError("\"methods\" need be specified all of \"type\" (kprobe/uprobe), \"name\" (your ebpf function) and \"target\" (attach which one).")
                 return False
@@ -60,7 +76,6 @@ def verifyPlugins(plugins: dict) -> bool:
             if "struct" not in plugin:
                 util.printError("ctl or struct must be provided one at least.")
                 return False
-            util.printTip("Default output handler will be used by default.")
         else:
             if not os.path.exists("ctl/" + plugin["ctl"]):
                 util.printError("ctl/{} not exists.".format(plugin["ctl"]))
@@ -76,4 +91,55 @@ def verifyPlugins(plugins: dict) -> bool:
                     del plugin["ctl"]
                 else:
                     return False
+        
+        # check the init_data item
+        if "init_data" in plugin:
+            if plugin["init_data"] is not list:
+                util.printError("\"init_data\" must be a `list`")
+                return False
+            for item in plugin["init_data"]:
+                if item is not dict:
+                    util.printError("Every item of \"init_data\" must be a `dict`")
+                    return False
+                if "name" not in item:
+                    util.printError("Name is essential in init_data.")
+                    return False
+                if "key" not in item and "leaf" not in item:
+                    util.printError("Key and leaf is needed at least one.")
+                    return False
+                hasKey, hasLeaf = "key" in item, "leaf" in item
+                if hasKey and item["key"] is not list:
+                    util.printError("\"key\" of item in \"init_data\" must be a list")
+                    return False
+                if hasLeaf and item["leaf"] is not list:
+                    util.printError("\"leaf\" of item in \"init_data\" must be a list")
+                    return False
+                if hasKey and hasLeaf and len(item["key"]) != len(item["leaf"]):
+                    util.printError("The number of keys and leaves must be equal.")
+                    return False
+                if not hasKey:
+                    util.printWarn("Key will be stuffed as 1 for {} by default.".format(item["name"]))
+                    item["key"] = list()
+                    for i in item["leaf"]:
+                        item["key"].append([1])
+                elif not hasLeaf:
+                    util.printWarn("Leaf will be stuffed as 1 for {} by default.".format(item["name"]))
+                    item["leaf"] = list()
+                    for i in item["key"]:
+                        item["leaf"].append([1])
+                if hasKey and len(item["key"]) == 0:
+                    util.printWarn("No key and leaf was provided, do you mean it?")
+                    plugin["init_data"].remove(item)
+                    continue
+                keyLen, leafLen = len(item["key"][0]), len(item["leaf"][0])
+                for i in range(1, len(item["key"])):
+                    if item["key"][i] is not list or item["leaf"][i] is not list:
+                        util.printError("keys and leaves must be list.")
+                        return False
+                    if len(item["key"][i]) != keyLen:
+                        util.printError("Every key must have same number of fields.")
+                        return False
+                    if len(item["leaf"][i]) != leafLen:
+                        util.printError("Every leaf must have same number of fields.")
+                        return False
     return True
