@@ -3,7 +3,13 @@
 import os
 import util
 
-def verifyPlugins(plugins: dict) -> bool:
+
+#
+# @brief check plugins' validity.
+# @param plugins - plugins in json
+# @return bool - if the plugins are valid
+#
+def verifyPlugins(plugins: list) -> bool:
     # record if there are duplicated module names or source files.
     allPlugNames = set()
     allSrcNames = set()
@@ -60,7 +66,6 @@ def verifyPlugins(plugins: dict) -> bool:
             if "struct" not in plugin:
                 util.printError("ctl or struct must be provided one at least.")
                 return False
-            util.printTip("Default output handler will be used by default.")
         else:
             if not os.path.exists("ctl/" + plugin["ctl"]):
                 util.printError("ctl/{} not exists.".format(plugin["ctl"]))
@@ -76,4 +81,40 @@ def verifyPlugins(plugins: dict) -> bool:
                     del plugin["ctl"]
                 else:
                     return False
+        
+        # check the init_data item
+        if "init_data" in plugin:
+            for item in plugin["init_data"]:
+                if "name" not in item:
+                    util.printError("Name is essential in init_data.")
+                    return False
+                if "key" not in item and "leaf" not in item:
+                    util.printError("Key and leaf is needed at least one.")
+                    return False
+                hasKey, hasLeaf = "key" in item, "leaf" in item
+                if hasKey and hasLeaf and len(item["key"]) != len(item["leaf"]):
+                    util.printError("The number of keys and leaves must be equal.")
+                    return False
+                if not hasKey:
+                    util.printWarn("Key will be stuffed as 1 for {} by default.".format(item["name"]))
+                    item["key"] = list()
+                    for i in item["leaf"]:
+                        item["key"].append([1])
+                elif not hasLeaf:
+                    util.printWarn("Leaf will be stuffed as 1 for {} by default.".format(item["name"]))
+                    item["leaf"] = list()
+                    for i in item["key"]:
+                        item["leaf"].append([1])
+                if hasKey and len(item["key"]) == 0:
+                    util.printWarn("No key and leaf was provided, do you mean it?")
+                    plugin["init_data"].remove(item)
+                    continue
+                keyLen, leafLen = len(item["key"][0]), len(item["leaf"][0])
+                for i in range(1, len(item["key"])):
+                    if len(item["key"][i]) != keyLen:
+                        util.printError("Every key must have same number of fields.")
+                        return False
+                    if len(item["leaf"][i]) != leafLen:
+                        util.printError("Every leaf must have same number of fields.")
+                        return False
     return True

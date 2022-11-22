@@ -3,7 +3,7 @@
 #
 import re
 import os
-import json
+import time
 import util
 import verify
 
@@ -15,8 +15,67 @@ def print_{}(cpu, data, size):
 """
 
 
+initDataTemplate = """
+# init for {name}.
+{name}_key = {key}
+{name}_leaf = {leaf}
+for i in range(len({name}_key)):
+    cur_key = b[\"{name}\"].Key({keys})
+    b[\"{name}\"][cur_key] = b[\"{name}\"].Leaf({leaves})
+
+"""
+
+
 #
-# @brief - To return a handler in the ctl file, replace the method name if invalid.
+# @brief generate the handlers of inserting datas into BPF_MAPs.
+# @param initDatas - list of data infos
+# @return str - handlers to insert datas
+#
+def getInitHandlers(initDatas: list) -> str:
+    ret = ""
+    for dataInfo in initDatas:
+        keyLen, leafLen = 0, 0
+        key, leaf = "[", "["
+        keys, leaves = "", ""
+        for i in range(len(dataInfo["key"])):
+            if i == 0:
+                key += "["
+                leaf += "["
+                keyLen = len(dataInfo["key"][i])
+                leafLen = len(dataInfo["leaf"][i])
+                for j in range(keyLen):
+                    if j == 0:
+                        keys += "{}_key[i][{}]".format(dataInfo["name"], j)
+                    else:
+                        keys += ",{}_key[i][{}]".format(dataInfo["name"], j)
+                for j in range(leafLen):
+                    if j == 0:
+                        leaves += "{}_leaf[i][{}]".format(dataInfo["name"], j)
+                    else:
+                        leaves += ",{}_leaf[i][{}]".format(dataInfo["name"], j)
+            else:
+                key += ",["
+                leaf += ",["
+            for j in range(keyLen):
+                if j == 0:
+                    key += "{}".format(dataInfo["key"][i][j])  
+                else:
+                    key += ",{}".format(dataInfo["key"][i][j])
+            for j in range(leafLen):
+                if j == 0:
+                    leaf += "{}".format(dataInfo["leaf"][i][j])
+                else:
+                    leaf += ",{}".format(dataInfo["leaf"][i][j])
+            key += "]"
+            leaf += "]"
+        key += "]"
+        leaf += "]"
+    ret += initDataTemplate.format(name=dataInfo["name"], key=key, leaf=leaf, keys=keys, leaves=leaves)
+    return ret
+
+
+#
+# @brief To return a handler in the ctl file, replace the method name if invalid.
 # @param ctlPath - the "ctl" file's path
 # @param event - "perf_event"'s name
 # @return str - the handler in `str`
@@ -33,7 +92,7 @@ def getHandlerByCtl(ctlPath: str, event: str) -> str:
 
 
 #
-# @brief - To return a handler based on the specified struct
+# @brief To return a handler based on the specified struct
 # @param src - src file's content
 # @param structName - the name of specified struct in plugins.json
 # @param event - "perf_event"'s name
@@ -70,7 +129,7 @@ def loadPlugin(plugin: dict) -> dict:
         return None
     util.printTip("Trying to load module {}.".format(plugin["name"] if "name" in plugin else plugin["src"]))
 
-    ret = {"headers": None, "prog": None, "attach": "", "handler": None, "buffer": None}
+    ret = {"headers": None, "prog": None, "attach": "", "handler": None, "buffer": None, "init": None}
     src = util.safeRead("src/" + plugin["src"])
     if not src or not len(src):
         util.printError("Cannot get the content of {}, loaded failed.".format(plugin["src"]))
@@ -86,7 +145,13 @@ def loadPlugin(plugin: dict) -> dict:
     ret["prog"] = src
     for m in plugin["methods"]:
         if m["type"] == "kprobe":
-            ret["attach"] += "b.attach_{}(event=b.get_syscall_fnname(\"{}\"), fn_name=\"{}\")\n".format(m["type"],
+            if "kprobe" in m:
+                if m["kprobe"] == "raw":
+                    ret["attach"] += "b.attach_{}(event=\"{}\", fn_name=\"{}\")\n".format(m["type"],
+                                                                                        m["target"],
+                                                                                        m["name"])
+            else:
+                ret["attach"] += "b.attach_{}(event=b.get_syscall_fnname(\"{}\"), fn_name=\"{}\")\n".format(m["type"],
                                                                                                     m["target"],
                                                                                                     m["name"])
         else:
@@ -104,6 +169,11 @@ def loadPlugin(plugin: dict) -> dict:
         util.printError("No perf_event handler was loaded!")
         return None
     ret["buffer"] = "b[\"{}\"].open_perf_buffer(print_{})\n".format(plugin["perf_event"], plugin["perf_event"])
+
+    if "init_data" in plugin:
+        ret["init"] = getInitHandlers(plugin["init_data"])
+    else:
+        ret["init"] = ""
 
     util.printOk("module \"{}\" loaded successfully.".format(plugin["name"] if "name" in plugin else plugin["src"]))
     return ret
@@ -129,6 +199,8 @@ print("Bpf program loaded. Ctrl + C to stop...")
 
 {buffer}
 
+{init}
+
 while True:
     try:
         b.perf_buffer_poll()
@@ -136,15 +208,19 @@ while True:
         exit(0)
     """
 
-    headers, progs, attaches, handlers, buffers = "", "", "", "", ""
+    startTime = time.perf_counter_ns()
+    headers, progs, attaches, handlers, buffers, init = "", "", "", "", "", ""
     plugins = util.getJson("plugins.json")
     if not plugins:
         util.printError("\"plugins.json\" loaded failed.")
         exit(-1)
+    if plugins is list:
+        util.printError("\"plugin.json\" is in wrong format.")
+        exit(-1)
     if not verify.verifyPlugins(plugins):
         util.printError("Validation failed: Invalid syntax checked in plugins.json.")
         exit(-1)
-    util.printOk("Validation passed.")
+    util.printOk("Validation passed in {:.2f}s.".format((time.perf_counter_ns() - startTime) / 1e9))
 
     for p in plugins:
         plugin = loadPlugin(p)
@@ -155,15 +231,17 @@ while True:
         attaches += plugin["attach"]
         handlers += plugin["handler"]
         buffers += plugin["buffer"]
+        init += plugin["init"]
+
     
     if progs == "" or handlers == "":
         util.printError("No module was loaded.")
     if attaches == "":
         util.printWarn("No method attach to kernel functions, do you mean it?")
 
-    if util.safeWrite("ebpf.py", prog.format(prog=headers + progs, attach=attaches, handler=handlers, buffer=buffers)):
+    if util.safeWrite("ebpf.py", prog.format(prog=headers + progs, attach=attaches, handler=handlers, buffer=buffers, init=init)):
         os.system("chmod u+x ebpf.py")
-        util.printOk("ebpf.py has been generated.")
+        util.printOk("ebpf.py has been generated in {:.2f}s.".format((time.perf_counter_ns() - startTime) / 1e9))
     else:
         util.printError("ebpf.py generated failed.")
 
